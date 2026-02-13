@@ -1,12 +1,12 @@
 {
   "platforms": {
-    "instagram": { "enabled": false, "type": "video_ig", "limit": 2200 },
+    "instagram": { "enabled": true, "type": "video_ig", "limit": 2200 },
     "facebook":  { "enabled": true, "type": "video_gen", "limit": 3000 },
-    "telegram":  { "enabled": false, "type": "mixed",     "limit": 1024 },
-    "twitter":   { "enabled": false, "type": "mixed",     "limit": 280 },
-    "threads":   { "enabled": false, "type": "image",     "limit": 500 },
-    "tumblr":    { "enabled": false, "type": "image",     "limit": 2000 },
-    "discord":   { "enabled": false, "type": "mixed",     "limit": 2000 }
+    "telegram":  { "enabled": true, "type": "mixed",     "limit": 1024 },
+    "twitter":   { "enabled": true, "type": "mixed",     "limit": 280 },
+    "threads":   { "enabled": true, "type": "image",     "limit": 500 },
+    "tumblr":    { "enabled": true, "type": "image",     "limit": 2000 },
+    "discord":   { "enabled": true, "type": "mixed",     "limit": 2000 }
   },
   "dropbox": {
     "folder_video_ig": "/instagram",
