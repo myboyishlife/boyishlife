@@ -1,0 +1,21 @@
+{
+  "platforms": {
+    "instagram": { "enabled": false, "type": "video_ig", "limit": 2200 },
+    "facebook":  { "enabled": true, "type": "video_gen", "limit": 3000 },
+    "telegram":  { "enabled": false, "type": "mixed",     "limit": 1024 },
+    "twitter":   { "enabled": false, "type": "mixed",     "limit": 280 },
+    "threads":   { "enabled": false, "type": "image",     "limit": 500 },
+    "tumblr":    { "enabled": false, "type": "image",     "limit": 2000 },
+    "discord":   { "enabled": false, "type": "mixed",     "limit": 2000 }
+  },
+  "dropbox": {
+    "folder_video_ig": "/instagram",
+    "folder_video_general": "/facebook",
+    "folder_images": "/images"
+  },
+  "settings": {
+    "post_delay": 10,
+    "retry_count": 1,
+    "fixed_hashtag": "#BoyishLife"
+  }
+}
