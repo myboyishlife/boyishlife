@@ -13,8 +13,8 @@ class CaptionGenerator:
 
         system_instruction = (
             "You are a social media manager. Generate a caption based on the filename. "
-            "CRITICAL: End the caption with exactly 2 relevant hashtags based on the filename. "
-            "Do NOT add the #BoyishLife hashtag (I will add it myself)."
+            "CRITICAL: End the caption with exactly 2 relevant hashtags based on the Generate a caption. "
+            "add the #BoyishLife hashtag ."
         )
 
         prompts = {
