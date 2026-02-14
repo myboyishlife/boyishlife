@@ -3,15 +3,15 @@
     "instagram": { 
       "enabled": true, 
       "upload_from_ig": true,
-      "upload_from_general": false,
-      "upload_from_images": false,
+      "upload_from_general": true,
+      "upload_from_images": true,
       "limit": 2200 
     },
     "facebook": { 
       "enabled": true, 
-      "upload_from_ig": false,
+      "upload_from_ig": true,
       "upload_from_general": true,
-      "upload_from_images": false,
+      "upload_from_images": true,
       "limit": 3000 
     },
     "telegram": { 
@@ -23,22 +23,22 @@
     },
     "twitter": { 
       "enabled": true, 
-      "upload_from_ig": false,
-      "upload_from_general": false,
+      "upload_from_ig": true,
+      "upload_from_general": true,
       "upload_from_images": true,
       "limit": 280 
     },
     "threads": { 
       "enabled": true, 
-      "upload_from_ig": false,
-      "upload_from_general": false,
+      "upload_from_ig": true,
+      "upload_from_general": true,
       "upload_from_images": true,
       "limit": 500 
     },
     "tumblr": { 
       "enabled": true, 
-      "upload_from_ig": false,
-      "upload_from_general": false,
+      "upload_from_ig": true,
+      "upload_from_general": true,
       "upload_from_images": true,
       "limit": 2000 
     },

@@ -3,9 +3,10 @@ import json
 import time
 import logging
 import sys
+from collections import defaultdict
 from dotenv import load_dotenv
 
-# Core Safety Modules
+# Core Modules
 from core.retry_manager import SmartRetry
 from core.verifier import MediaVerifier
 
@@ -14,7 +15,7 @@ from modules.dropbox_handler import DropboxHandler
 from modules.caption_generator import CaptionGenerator
 from modules.utils import setup_logging
 
-# Platforms
+# Platform Classes
 from platforms.instagram import InstagramPoster
 from platforms.facebook import FacebookPoster
 from platforms.threads import ThreadsPoster
@@ -23,263 +24,278 @@ from platforms.telegram import TelegramPoster
 from platforms.discord import DiscordPoster
 from platforms.tumblr import TumblrPoster
 
+
+# ============================================
+# INIT
+# ============================================
+
 load_dotenv()
 logger = setup_logging()
-SUMMARY = []
 
-def build_caption(caption_payload):
-    """Combines Text + Tags + Brand for platforms that don't have separate tags."""
-    if isinstance(caption_payload, dict):
-        text = caption_payload.get("text", "").strip()
-        tags = " ".join([f"#{t}" for t in caption_payload.get("tags", [])])
-        brand = caption_payload.get("brand_tag", "")
-        return f"{text}\n\n{tags}\n\n{brand}".strip()
-    return str(caption_payload)
+PLATFORM_RESULTS = defaultdict(lambda: {
+    "success": 0,
+    "failed": 0,
+    "skipped": 0
+})
 
-def load_config():
-    """Loads configuration dynamically from JSON."""
-    with open('config.json', 'r') as f:
-        return json.load(f)
 
-def safe_post(platform_name, platform_obj, method_name, file_arg, caption, retries=1, 
-              retry_engine=None, local_path=None, media_type=None):
-    """
-    Enhanced safe_post with SmartRetry and MediaVerifier integration.
-    Maintains backward compatibility with original safe_post function.
-    """
-    # Media Verification Step (if local_path provided)
-    if local_path and os.path.exists(local_path):
-        is_safe, msg = MediaVerifier.verify(local_path, platform_name, media_type)
-        if not is_safe:
-            logger.warning(f"⚠️ {platform_name.upper()}: Skipped ({msg})")
-            SUMMARY.append(f"⚠️ {platform_name.upper()}: Skipped ({msg})")
-            return False
-    
-    # Use SmartRetry if provided, otherwise use original retry logic
-    if retry_engine:
-        try:
-            logger.info(f"🚀 {platform_name.upper()} Starting with SmartRetry...")
-            start_time = time.time()
-            
-            if not hasattr(platform_obj, method_name):
-                logger.warning(f"⚠️ {platform_name} does not support {method_name}. Skipping.")
-                return False
-            
-            method = getattr(platform_obj, method_name)
-            
-            # Execute with SmartRetry engine
-            result = retry_engine.execute(method, file_arg, caption)
+# ============================================
+# CAPTION BUILDER (Non-Tumblr Platforms)
+# ============================================
 
-            if result == "SKIPPED":
-                logger.warning(f"{platform_name} skipped due to media validation/API rejection.")
-                SUMMARY.append(f"{platform_name.upper()}: Skipped (media error)")
-                return False
-            
-            duration = time.time() - start_time
-            logger.info(f"✅ {platform_name} Success! (Took {duration:.1f}s)")
-            SUMMARY.append(f"✅ {platform_name.upper()}: Success ({duration:.1f}s)")
+def build_caption(payload, platform_name):
+    if isinstance(payload, dict):
+        text = str(payload.get("text", "")).strip()
+        brand = str(payload.get("brand_tag", "")).strip()
+        tags = payload.get("tags", [])
+
+        limits = {"instagram": 4, "facebook": 4, "twitter": 3}
+        tag_limit = limits.get(platform_name, 4)
+
+        if isinstance(tags, str):
+            tags = tags.split(",") if "," in tags else tags.split()
+
+        tag_string = " ".join([f"#{str(t).lstrip('#')}" for t in tags[:tag_limit]])
+
+        return f"{text}\n\n{tag_string}\n\n{brand}".strip()
+
+    return str(payload)
+
+def safe_trim_caption(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+
+    logger.warning(f"Caption trimmed to {limit} characters")
+    return text[:limit].rsplit(" ", 1)[0]
+
+
+# ============================================
+# SAFE POST WRAPPER
+# ============================================
+
+def safe_post(platform_name, platform_obj, method_name,
+              file_arg, caption, retry_engine,
+              local_path, media_type):
+
+    # Media verification
+    is_safe, msg = MediaVerifier.verify(local_path, platform_name, media_type)
+
+    if not is_safe:
+        logger.warning(f"{platform_name.upper()} skipped: {msg}")
+        PLATFORM_RESULTS[platform_name]["skipped"] += 1
+        return False
+
+    try:
+        logger.info(f"{platform_name.upper()} uploading...")
+
+        method = getattr(platform_obj, method_name)
+
+        result = retry_engine.execute(method, file_arg, caption)
+
+        if result is True:
+            PLATFORM_RESULTS[platform_name]["success"] += 1
+            logger.info(f"{platform_name.upper()} success")
             return True
-            
-        except Exception as e:
-            logger.error(f"❌ {platform_name} Failed: {e}")
-            SUMMARY.append(f"❌ {platform_name.upper()}: Failed ({str(e)})")
+
+        else:
+            PLATFORM_RESULTS[platform_name]["failed"] += 1
+            logger.error(f"{platform_name.upper()} failed (API returned False)")
             return False
+
+    except Exception as e:
+        PLATFORM_RESULTS[platform_name]["failed"] += 1
+        logger.exception(f"{platform_name.upper()} exception: {str(e)}")
+        return False
+
+
+# ============================================
+# FINAL SUMMARY
+# ============================================
+
+def print_final_summary(enabled_platforms, total_platforms, dbx, platforms):
+
+    total_success = sum(d["success"] for d in PLATFORM_RESULTS.values())
+    total_failed = sum(d["failed"] for d in PLATFORM_RESULTS.values())
+    total_skipped = sum(d["skipped"] for d in PLATFORM_RESULTS.values())
+
+    dropbox_stats = dbx.get_folder_stats()
+
+    summary_lines = []
+    summary_lines.append("=" * 60)
+    summary_lines.append("UNIVERSAL WORKFLOW FINAL SUMMARY")
+    summary_lines.append("=" * 60)
+    summary_lines.append(f"Enabled Platforms : {len(enabled_platforms)}")
+    summary_lines.append(f"Disabled Platforms: {total_platforms - len(enabled_platforms)}")
+    summary_lines.append("-" * 60)
+    summary_lines.append(f"Total Success     : {total_success}")
+    summary_lines.append(f"Total Failed      : {total_failed}")
+    summary_lines.append(f"Total Skipped     : {total_skipped}")
+    summary_lines.append("=" * 60)
+
+    for name in enabled_platforms:
+        data = PLATFORM_RESULTS[name]
+        summary_lines.append(
+            f"{name.upper():10} -> "
+            f"S:{data['success']} | "
+            f"F:{data['failed']} | "
+            f"SK:{data['skipped']}"
+        )
+
+    summary_lines.append("=" * 60)
+    summary_lines.append("DROPBOX REMAINING FILES")
+    summary_lines.append("-" * 60)
+    summary_lines.append(f"IG Videos       : {dropbox_stats['video_ig']}")
+    summary_lines.append(f"General Videos  : {dropbox_stats['video_general']}")
+    summary_lines.append(f"Images          : {dropbox_stats['images']}")
+    summary_lines.append("-" * 60)
+    summary_lines.append(f"TOTAL FILES     : {dropbox_stats['total']}")
+    summary_lines.append("=" * 60)
+
+    final_summary = "\n".join(summary_lines)
+
+    logger.info("\n" + final_summary)
+
+    # Send to Telegram if enabled
+    if "telegram" in platforms:
+        try:
+            platforms["telegram"].send_message(final_summary)
+        except Exception as e:
+            print(f"Failed to send summary to Telegram: {e}")
+
+    # Cron-safe exit
+    if total_success == 0 and total_failed > 0:
+        sys.exit(1)
     else:
-        # Original retry logic (fallback)
-        for attempt in range(retries + 1):
-            try:
-                logger.info(f"🚀 {platform_name.upper()} Attempt {attempt + 1}...")
-                start_time = time.time()
-                
-                if not hasattr(platform_obj, method_name):
-                    logger.warning(f"⚠️ {platform_name} does not support {method_name}. Skipping.")
-                    return False
-                
-                method = getattr(platform_obj, method_name)
-                method(file_arg, caption)
-                
-                duration = time.time() - start_time
-                logger.info(f"✅ {platform_name} Success! (Took {duration:.1f}s)")
-                SUMMARY.append(f"✅ {platform_name.upper()}: Success ({duration:.1f}s)")
-                return True
-                
-            except Exception as e:
-                logger.error(f"❌ {platform_name} Failed: {e}")
-                if attempt < retries:
-                    time.sleep(5)
-                else:
-                    SUMMARY.append(f"❌ {platform_name.upper()}: Failed ({str(e)})")
-                    return False
+        sys.exit(0)
+
+# MAIN WORKFLOW
+# ============================================
 
 def main():
-    logger.info("==========================================")
-    logger.info("🚀 WORKFLOW STARTED - PRODUCTION CORE MODE")
-    logger.info("==========================================")
-    
-    config = load_config()
-    dbx = DropboxHandler(config['dropbox'])
+
+    logger.info("=" * 50)
+    logger.info("UNIVERSAL ROTATING WORKFLOW STARTED")
+    logger.info("=" * 50)
+
+    config = json.load(open("config.json", "r"))
+
+    dbx = DropboxHandler(config["dropbox"])
     ai = CaptionGenerator(config)
-    p_conf = config['platforms']
-    
-    # Initialize Core Engines
-    retry_engine = SmartRetry(max_attempts=config['settings'].get('retry_count', 1))
-    retries = config['settings'].get('retry_count', 1)
-    delay = config['settings'].get('post_delay', 10)
+    p_conf = config["platforms"]
 
-    # 1. Initialize ALL Enabled Platforms
-    platforms = {}
-    if p_conf['instagram']['enabled']: platforms['instagram'] = InstagramPoster()
-    if p_conf['facebook']['enabled']: platforms['facebook'] = FacebookPoster()
-    if p_conf['threads']['enabled']: platforms['threads'] = ThreadsPoster()
-    if p_conf['twitter']['enabled']: platforms['twitter'] = TwitterPoster()
-    if p_conf['telegram']['enabled']: platforms['telegram'] = TelegramPoster()
-    if p_conf['discord']['enabled']: platforms['discord'] = DiscordPoster()
-    if p_conf['tumblr']['enabled']: platforms['tumblr'] = TumblrPoster()
+    retry_engine = SmartRetry(
+        max_attempts=config["settings"].get("retry_count", 3)
+    )
 
-    # ======================================================
-    # PIPELINE 1: IG VIDEO SOURCE
-    # ======================================================
-    target_platforms = [p for p in platforms if p_conf[p].get('upload_from_ig', False)]
-    
-    if target_platforms:
-        logger.info("\n--- PIPELINE 1: IG VIDEO SOURCE ---")
-        ig_file = dbx.get_file('ig')
-        if ig_file:
-            logger.info(f"📹 Selected: {ig_file.name}")
-            ig_url = dbx.get_temp_link(ig_file)
-            caption_payload = ai.generate(ig_file.name, "instagram")
-            
-            success_count = 0
-            for p in target_platforms:
-                if p == 'tumblr':
-                    final_cap = caption_payload
-                else:
-                    final_cap = build_caption(caption_payload)[:p_conf[p]['limit']]
-                
-                # Use enhanced safe_post with retry_engine
-                if safe_post(p, platforms[p], 'post_video', ig_url, final_cap, 
-                           retries, retry_engine):
-                    success_count += 1
-            
-            if success_count > 0:
-                logger.info("🗑️ Deleting IG Source file...")
-                dbx.delete_file(ig_file)
+    delay = config["settings"].get("post_delay", 10)
+
+    mapping = {
+        "instagram": InstagramPoster,
+        "facebook": FacebookPoster,
+        "threads": ThreadsPoster,
+        "twitter": TwitterPoster,
+        "telegram": TelegramPoster,
+        "discord": DiscordPoster,
+        "tumblr": TumblrPoster,
+    }
+
+    total_platforms = len(mapping)
+
+    platforms = {
+        name: cls()
+        for name, cls in mapping.items()
+        if p_conf.get(name, {}).get("enabled")
+    }
+
+    enabled_names = list(platforms.keys())
+
+    sources = [
+        {"id": "ig", "flag": "upload_from_ig", "media": "video", "cap": "instagram"},
+        {"id": "general", "flag": "upload_from_general", "media": "video", "cap": "general_video"},
+        {"id": "image", "flag": "upload_from_images", "media": "image", "cap": "image"},
+    ]
+
+    for src in sources:
+
+        file = dbx.get_file(src["id"])
+
+        targets = [
+            p for p in platforms
+            if p_conf[p].get(src["flag"])
+        ]
+
+        if not file or not targets:
+            continue
+
+        logger.info(f"\nProcessing {src['id'].upper()} → {file.name}")
+
+        local_path = dbx.download_file(file)
+        public_url = dbx.get_temp_link(file)
+
+        caption_payload = ai.generate(file.name, src["cap"])
+
+        file_failed = False
+
+        for p_name in targets:
+
+            method = "post_video" if src["media"] == "video" else "post_image"
+
+            # Tumblr handles caption internally
+            if p_name == "tumblr":
+                final_caption = caption_payload
             else:
-                logger.warning("⛔ IG Source NOT deleted")
+                limit = p_conf[p_name].get("limit", 2000)
+                formatted = build_caption(caption_payload, p_name)
+                final_caption = safe_trim_caption(formatted, limit)
+
+            posted = False
+
+            # URL-first platforms
+            if p_name in ["instagram", "threads"]:
+                posted = safe_post(
+                    p_name,
+                    platforms[p_name],
+                    method,
+                    public_url,
+                    final_caption,
+                    retry_engine,
+                    local_path,
+                    src["media"]
+                )
+
+            # Fallback or normal platforms
+            if not posted:
+                result = safe_post(
+                    p_name,
+                    platforms[p_name],
+                    method,
+                    local_path,
+                    final_caption,
+                    retry_engine,
+                    local_path,
+                    src["media"]
+                )
+
+                if not result:
+                    file_failed = True
+
+            time.sleep(delay)
+
+        if os.path.exists(local_path):
+            os.remove(local_path)
+
+        if not file_failed:
+            dbx.delete_file(file)
+            logger.info("Dropbox file deleted (all targets success)")
         else:
-            logger.info("📭 No files in IG folder.")
+            dbx.move_to_failed(file, src["id"])
+            logger.warning("File moved to failed folder due to upload failures")
 
-    # ======================================================
-    # PIPELINE 2: GENERAL VIDEO SOURCE
-    # ======================================================
-    target_platforms = [p for p in platforms if p_conf[p].get('upload_from_general', False)]
-    
-    if target_platforms:
-        logger.info("\n--- PIPELINE 2: GENERAL VIDEO SOURCE ---")
-        gen_file = dbx.get_file('general')
-        if gen_file:
-            logger.info(f"📹 Selected: {gen_file.name}")
-            logger.info(f"  Targets: {target_platforms}")
-            local_path = dbx.download_file(gen_file)
-            caption_payload = ai.generate(gen_file.name, "general_video")
-            
-            success_count = 0
-            for p in target_platforms:
-                if p == 'tumblr':
-                    final_cap = caption_payload
-                else:
-                    final_cap = build_caption(caption_payload)[:p_conf[p]['limit']]
-                
-                # Determine file argument based on platform
-                if p in ['threads', 'instagram']:
-                    file_arg = dbx.get_temp_link(gen_file)
-                else:
-                    file_arg = local_path
-                
-                # Use enhanced safe_post with MediaVerifier and retry_engine
-                if safe_post(p, platforms[p], 'post_video', file_arg, final_cap,
-                           retries, retry_engine, local_path, 'video'):
-                    success_count += 1
-                    time.sleep(delay)
-            
-            if os.path.exists(local_path): os.remove(local_path)
-            
-            if success_count > 0:
-                logger.info("🗑️ Deleting General Video Source file...")
-                dbx.delete_file(gen_file)
-            else:
-                logger.warning("⛔ General Video NOT deleted")
-        else:
-            logger.info("📭 No files in General Video folder.")
+    print_final_summary(enabled_names, total_platforms, dbx, platforms)
 
-    # ======================================================
-    # PIPELINE 3: IMAGE SOURCE
-    # ======================================================
-    target_platforms = [p for p in platforms if p_conf[p].get('upload_from_images', False)]
 
-    if target_platforms:
-        logger.info("\n--- PIPELINE 3: IMAGE SOURCE ---")
-        img_file = dbx.get_file('image')
-        if img_file:
-            logger.info(f"📸 Selected: {img_file.name}")
-            logger.info(f"  Targets: {target_platforms}")
-            local_path = dbx.download_file(img_file)
-            public_url = dbx.get_temp_link(img_file)
-            caption_payload = ai.generate(img_file.name, "image")
-            
-            success_count = 0
-            for p in target_platforms:
-                if p == 'tumblr':
-                    final_cap = caption_payload
-                else:
-                    final_cap = build_caption(caption_payload)[:p_conf[p]['limit']]
-                
-                # Determine file argument based on platform
-                if p in ['threads', 'instagram']:
-                    file_arg = public_url
-                else:
-                    file_arg = local_path
-                
-                # Use enhanced safe_post with MediaVerifier and retry_engine
-                if safe_post(p, platforms[p], 'post_image', file_arg, final_cap,
-                           retries, retry_engine, local_path, 'image'):
-                    success_count += 1
-                    time.sleep(delay)
-            
-            if os.path.exists(local_path): os.remove(local_path)
-            
-            if success_count > 0:
-                logger.info("🗑️ Deleting Image Source file...")
-                dbx.delete_file(img_file)
-            else:
-                logger.warning("⛔ Image NOT deleted")
-        else:
-            logger.info("📭 No files in Image folder.")
-
-    # ======================================================
-    # FINAL PRODUCTION SUMMARY
-    # ======================================================
-    print("\n" + "="*40)
-    print("📊 FINAL EXECUTION SUMMARY")
-    print("="*40)
-    if not SUMMARY:
-        print("   No actions were performed.")
-    else:
-        for item in SUMMARY: print(item)
-    print("="*40 + "\n")
-
-    # ======================================================
-    # SAFE EXIT STRATEGY (GitHub Status Guard)
-    # ======================================================
-    # If any summary item contains a failure emoji, exit with code 1
-    errors_detected = any("❌" in item for item in SUMMARY)
-    
-    if errors_detected:
-        logger.error("🚫 Workflow finished with errors.")
-        sys.exit(1)  # GitHub Action will show RED
-    else:
-        logger.info("✅ Workflow finished successfully.")
-        sys.exit(0)  # GitHub Action will show GREEN
 
 if __name__ == "__main__":
     main()
+
+

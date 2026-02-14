@@ -10,17 +10,24 @@ class CaptionGenerator:
 
     def generate(self, filename, group_type):
         clean_name = os.path.splitext(filename)[0].replace('_', ' ')
+        
+        tag_counts = {
+            "instagram": 4,
+            "general_video": 4, # Used for Facebook
+            "image": 3          # Used for Twitter/Threads
+        }
+        count = tag_counts.get(group_type, 3)
 
         system_instruction = (
             "You are a social media manager. Generate a caption based on the filename. "
-            "CRITICAL: End the caption with exactly 2 relevant hashtags based on the Generate a caption. "
-            "add the #BoyishLife hashtag ."
+            "CRITICAL: End the caption with exactly {count} relevant hashtags based on the filename. "
+            "Do NOT add the #BoyishLife hashtag (I will add it myself)."
         )
 
         prompts = {
             "instagram": f"Write an aesthetic, poetic caption for an Instagram Reel titled '{clean_name}'. Max 100 words.",
             "general_video": f"Write an engaging, storytelling caption for a video about '{clean_name}'. Max 150 words.",
-            "image": f"Write a short, punchy caption for a photo titled '{clean_name}'. Max 200 characters."
+            "image": f"Write a short, punchy caption for a photo titled '{clean_name}'. Max 100 words."
         }
 
         user_prompt = prompts.get(group_type, prompts['image'])
@@ -39,7 +46,12 @@ class CaptionGenerator:
 
             parts = raw_caption.split('#')
             main_text = parts[0].strip()
-            hashtags = [p.strip() for p in parts[1:] if p.strip()]
+
+            hashtags = []
+            for p in parts[1:]:
+                tag = p.split()[0].strip().replace(',', '').replace('.', '')
+                if len(tag) > 1:
+                    hashtags.append(tag)
 
             return {
                 "text": main_text,

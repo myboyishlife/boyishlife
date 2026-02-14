@@ -1,52 +1,193 @@
-import dropbox
+import logging
 import os
 import random
-import logging
+import dropbox
+from dropbox.exceptions import ApiError
+
 
 class DropboxHandler:
     def __init__(self, config):
         self.logger = logging.getLogger(__name__)
-        self.client = dropbox.Dropbox(
-            app_key=os.getenv("DROPBOX_APP_KEY"),
-            app_secret=os.getenv("DROPBOX_APP_SECRET"),
-            oauth2_refresh_token=os.getenv("DROPBOX_REFRESH_TOKEN")
-        )
         self.conf = config
+        self.client = None  # Lazy initialization
+
+    # =====================================================
+    # LAZY CLIENT CONNECT
+    # =====================================================
+
+    def _get_client(self):
+        """
+        Initialize Dropbox client only when first needed.
+        Prevents startup delay.
+        """
+        if self.client is None:
+            try:
+                self.client = dropbox.Dropbox(
+                    app_key=os.getenv("DROPBOX_APP_KEY"),
+                    app_secret=os.getenv("DROPBOX_APP_SECRET"),
+                    oauth2_refresh_token=os.getenv("DROPBOX_REFRESH_TOKEN"),
+                    timeout=30,
+                )
+                self.logger.info("Dropbox client initialized (lazy)")
+            except Exception as e:
+                self.logger.error(f"Dropbox initialization failed: {e}")
+                raise
+
+        return self.client
+
+    # =====================================================
+    # FILE SELECTION
+    # =====================================================
 
     def get_file(self, folder_type):
         """
-        folder_type: 'ig', 'general', or 'image'
+        folder_type: 'ig', 'general', 'image'
+        Returns random file metadata
         """
         path_map = {
-            'ig': self.conf['folder_video_ig'],
-            'general': self.conf['folder_video_general'],
-            'image': self.conf['folder_images']
+            "ig": self.conf["folder_video_ig"],
+            "general": self.conf["folder_video_general"],
+            "image": self.conf["folder_images"],
         }
+
         path = path_map.get(folder_type)
-        if not path: return None
+        if not path:
+            return None
 
         files = self._list_files(path)
         return random.choice(files) if files else None
 
+    # =====================================================
+    # FOLDER STATS (WITH PAGINATION SUPPORT)
+    # =====================================================
+
+    def get_folder_stats(self):
+        stats = {}
+
+        folder_map = {
+            "video_ig": self.conf["folder_video_ig"],
+            "video_general": self.conf["folder_video_general"],
+            "images": self.conf["folder_images"],
+        }
+
+        total_files = 0
+
+        for key, path in folder_map.items():
+            files = self._list_files(path)
+            count = len(files)
+            stats[key] = count
+            total_files += count
+
+        stats["total"] = total_files
+        return stats
+
+    # =====================================================
+    # LIST FILES (Handles >2000 files safely)
+    # =====================================================
+
     def _list_files(self, path):
         try:
-            res = self.client.files_list_folder(path)
-            return [entry for entry in res.entries if isinstance(entry, dropbox.files.FileMetadata)]
+            client = self._get_client()
+            results = client.files_list_folder(path)
+            files = [
+                entry
+                for entry in results.entries
+                if isinstance(entry, dropbox.files.FileMetadata)
+            ]
+
+            # Handle pagination
+            while results.has_more:
+                results = client.files_list_folder_continue(results.cursor)
+                files.extend(
+                    entry
+                    for entry in results.entries
+                    if isinstance(entry, dropbox.files.FileMetadata)
+                )
+
+            return files
+
         except Exception as e:
-            self.logger.error(f"Dropbox Error listing {path}: {e}")
+            self.logger.error(f"Dropbox list error ({path}): {e}")
             return []
 
+    # =====================================================
+    # DOWNLOAD
+    # =====================================================
+
     def download_file(self, file_metadata):
-        local_path = f"temp_{file_metadata.name}"
-        self.client.files_download_to_file(local_path, file_metadata.path_lower)
-        return local_path
+        try:
+            client = self._get_client()
+
+            local_path = f"temp_{file_metadata.name}"
+            client.files_download_to_file(local_path, file_metadata.path_lower)
+
+            return local_path
+
+        except Exception as e:
+            self.logger.error(f"Download failed: {e}")
+            return None
+
+    # =====================================================
+    # TEMP LINK (FOR IG / THREADS)
+    # =====================================================
 
     def get_temp_link(self, file_metadata):
-        return self.client.files_get_temporary_link(file_metadata.path_lower).link
+        try:
+            client = self._get_client()
+            link = client.files_get_temporary_link(
+                file_metadata.path_lower
+            ).link
+            return link
+        except Exception as e:
+            self.logger.error(f"Temp link failed: {e}")
+            return None
+
+    # =====================================================
+    # DELETE FILE
+    # =====================================================
 
     def delete_file(self, file_metadata):
         try:
-            self.client.files_delete_v2(file_metadata.path_lower)
-            self.logger.info(f"🗑️ Deleted {file_metadata.name} from Dropbox")
+            client = self._get_client()
+            client.files_delete_v2(file_metadata.path_lower)
+            self.logger.info(f"Deleted {file_metadata.name} from Dropbox")
         except Exception as e:
-            self.logger.error(f"Failed to delete {file_metadata.name}: {e}")
+            self.logger.error(f"Delete failed: {e}")
+
+    # =====================================================
+    # MOVE TO FAILED
+    # =====================================================
+
+    def move_to_failed(self, file_metadata, source_type):
+        """
+        Moves file to /failed/<source_type>/
+        """
+        client = self._get_client()
+
+        failed_root = "/failed"
+        failed_path = f"{failed_root}/{source_type}"
+        destination = f"{failed_path}/{file_metadata.name}"
+
+        try:
+            # Create folders safely
+            for folder in (failed_root, failed_path):
+                try:
+                    client.files_create_folder_v2(folder)
+                except ApiError as e:
+                    if e.error.is_path() and e.error.get_path().is_conflict():
+                        pass
+                    else:
+                        raise
+
+            client.files_move_v2(
+                file_metadata.path_lower,
+                destination,
+                autorename=True,
+            )
+
+            self.logger.warning(
+                f"Moved failed file to {failed_path}/{file_metadata.name}"
+            )
+
+        except Exception as e:
+            self.logger.error(f"Move to failed error: {e}")
