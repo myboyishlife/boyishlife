@@ -1,12 +1,54 @@
 {
   "platforms": {
-    "instagram": { "enabled": true, "type": "video_ig", "limit": 2200 },
-    "facebook":  { "enabled": true, "type": "video_gen", "limit": 3000 },
-    "telegram":  { "enabled": true, "type": "mixed",     "limit": 1024 },
-    "twitter":   { "enabled": true, "type": "image",     "limit": 280 },
-    "threads":   { "enabled": true, "type": "image",     "limit": 500 },
-    "tumblr":    { "enabled": true, "type": "image",     "limit": 2000 },
-    "discord":   { "enabled": true, "type": "mixed",     "limit": 2000 }
+    "instagram": { 
+      "enabled": true, 
+      "upload_from_ig": true,
+      "upload_from_general": false,
+      "upload_from_images": false,
+      "limit": 2200 
+    },
+    "facebook": { 
+      "enabled": true, 
+      "upload_from_ig": false,
+      "upload_from_general": true,
+      "upload_from_images": false,
+      "limit": 3000 
+    },
+    "telegram": { 
+      "enabled": true, 
+      "upload_from_ig": true,
+      "upload_from_general": true,
+      "upload_from_images": true,
+      "limit": 1024 
+    },
+    "twitter": { 
+      "enabled": true, 
+      "upload_from_ig": false,
+      "upload_from_general": false,
+      "upload_from_images": true,
+      "limit": 280 
+    },
+    "threads": { 
+      "enabled": true, 
+      "upload_from_ig": false,
+      "upload_from_general": false,
+      "upload_from_images": true,
+      "limit": 500 
+    },
+    "tumblr": { 
+      "enabled": true, 
+      "upload_from_ig": false,
+      "upload_from_general": false,
+      "upload_from_images": true,
+      "limit": 2000 
+    },
+    "discord": { 
+      "enabled": true, 
+      "upload_from_ig": true,
+      "upload_from_general": true,
+      "upload_from_images": true,
+      "limit": 2000 
+    }
   },
   "dropbox": {
     "folder_video_ig": "/instagram",
@@ -15,7 +57,7 @@
   },
   "settings": {
     "post_delay": 10,
-    "retry_count": 1,
+    "retry_count": 3,
     "fixed_hashtag": "#BoyishLife"
   }
 }

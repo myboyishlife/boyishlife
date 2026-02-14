@@ -137,9 +137,9 @@ def main():
     if p_conf['tumblr']['enabled']: platforms['tumblr'] = TumblrPoster()
 
     # ======================================================
-    # PIPELINE 1: INSTAGRAM REELS (Strict "video_ig")
+    # PIPELINE 1: IG VIDEO SOURCE
     # ======================================================
-    target_platforms = [p for p in platforms if p_conf[p]['type'] == 'video_ig']
+    target_platforms = [p for p in platforms if p_conf[p].get('upload_from_ig', False)]
     
     if target_platforms:
         logger.info("\n--- PIPELINE 1: IG VIDEO SOURCE ---")
@@ -170,9 +170,9 @@ def main():
             logger.info("📭 No files in IG folder.")
 
     # ======================================================
-    # PIPELINE 2: GENERAL VIDEO (Dynamic)
+    # PIPELINE 2: GENERAL VIDEO SOURCE
     # ======================================================
-    target_platforms = [p for p in platforms if p_conf[p]['type'] in ['video_gen', 'mixed']]
+    target_platforms = [p for p in platforms if p_conf[p].get('upload_from_general', False)]
     
     if target_platforms:
         logger.info("\n--- PIPELINE 2: GENERAL VIDEO SOURCE ---")
@@ -213,9 +213,9 @@ def main():
             logger.info("📭 No files in General Video folder.")
 
     # ======================================================
-    # PIPELINE 3: IMAGES (Dynamic)
+    # PIPELINE 3: IMAGE SOURCE
     # ======================================================
-    target_platforms = [p for p in platforms if p_conf[p]['type'] in ['image', 'mixed']]
+    target_platforms = [p for p in platforms if p_conf[p].get('upload_from_images', False)]
 
     if target_platforms:
         logger.info("\n--- PIPELINE 3: IMAGE SOURCE ---")
