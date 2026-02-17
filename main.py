@@ -155,12 +155,7 @@ def print_final_summary(enabled_platforms, total_platforms, dbx, platforms):
 
     logger.info("\n" + final_summary)
 
-    # Send to Telegram if enabled
-    if "telegram" in platforms:
-        try:
-            platforms["telegram"].send_message(final_summary)
-        except Exception as e:
-            print(f"Failed to send summary to Telegram: {e}")
+    
 
     # Cron-safe exit
     if total_success == 0 and total_failed > 0:
